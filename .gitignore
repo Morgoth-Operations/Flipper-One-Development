@@ -1,0 +1,10 @@
+# OS images and build output are large and reproducible; keep them out of git
+images/
+out/
+*.img
+*.img.zst
+*.img.gz
+*.img.xz
+*.bmap
+
+.DS_Store
