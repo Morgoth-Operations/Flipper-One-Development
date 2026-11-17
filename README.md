@@ -22,7 +22,7 @@ The BPI-M5 Pro is the same hardware as the ArmSoM Sige5. Flipper Devices lists i
 | --- | --- |
 | Board bring-up | Steps documented; not yet run on the board |
 | Prebuilt image | Nightly build 2494 downloaded and checksum-verified |
-| Local image build | Wrapper script written; first build in progress |
+| Local image build | Working: first `sige5` image built on 2026-11-17; not yet booted |
 
 ## Getting started
 
