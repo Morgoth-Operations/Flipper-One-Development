@@ -2,7 +2,7 @@
 
 How to get Flipper OS booting on the Banana Pi BPI-M5 Pro from a Mac.
 
-Status: written from the vendor and Flipper documentation on 2026-11-17. Nothing here has been run on the board yet. Steps marked "to confirm" are the ones most likely to need correcting after the first boot.
+Status: first bring-up done on 2026-11-19. The board boots Flipper OS from microSD after the factory eMMC boot area was erased (section 4), and Wi-Fi needs a device-tree overlay to stay up (section 8). Sections 5 and 7 have still not been run on hardware.
 
 ## 1. Power
 
@@ -47,6 +47,8 @@ The RK3576 on this board tries storage in a fixed order: eMMC, then microSD, the
 
 If the eMMC ships with a bootloader on it, the board boots that and ignores the microSD card. There are two ways to install, depending on what the eMMC holds.
 
+Our board shipped with ArmSoM's factory Debian 12 (kernel 6.1.57) on a 29 GB eMMC, so it ignored the card. Symptoms with the card in: red LED only, no green heartbeat. With the card out, the green LED blinks and the factory OS boots.
+
 ## 4. Option A: microSD card
 
 Needs only the card, a card reader and power. Try this first.
@@ -58,7 +60,24 @@ Needs only the card, a card reader and power. Try this first.
 5. Write, then eject.
 6. Insert the card into the board and connect power.
 
-If the board boots something other than Flipper OS, or nothing appears, the eMMC is taking priority. Use option B.
+If the board boots something other than Flipper OS, or nothing appears, the eMMC is taking priority. Either erase the eMMC boot area (below) so the card boots, or use option B.
+
+### Erasing the factory eMMC boot area (what we did)
+
+The factory OS exposes ADB as root over the `TYPEC` port (USB ID `2207:0006`, product `rk3xxx`). With the card out and the factory OS running:
+
+```bash
+brew install --cask android-platform-tools
+adb devices -l                     # the board should be listed
+# Back up the first 16 MiB (partition table, idbloader at sector 64, U-Boot at 8 MiB, misc)
+adb exec-out 'dd if=/dev/mmcblk0 bs=1M count=16 2>/dev/null' > sige5-emmc-factory-first16MiB.img
+# Erase it; the factory OS can no longer boot, the rest of the eMMC is untouched
+adb shell 'dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=16 conv=fsync; sync; poweroff'
+```
+
+Check the backup against `adb shell 'dd if=/dev/mmcblk0 bs=1M count=16 | sha256sum'` before erasing. Our backup is in `images/backup/` (git-ignored, SHA-256 `cff3f7516bd3954a623488491bb6eb832bebeaa6fc6db9bc6a7e057518c1838f`). Writing it back to the start of the eMMC restores the factory boot. The `mmcblk0boot0` and `boot1` hardware partitions were empty and did not need touching.
+
+After this, power on with the card in: the green LED starts blinking and Flipper OS boots from the card.
 
 ## 5. Option B: write to eMMC over USB (MaskROM)
 
@@ -99,15 +118,18 @@ rockusb reset-device
 
 ## 6. First boot
 
-Defaults read from the Flipper build scripts. To confirm on the board.
+Checked on the board on 2026-11-19 (Flipper OS welcome banner: Build ID 1384, profile `@Desktop`, kernel `7.4.0-rc1-g2be532b6a5aa`, Debian 13).
 
 | Item | Value |
 | --- | --- |
-| User / password | `user` / `user` (in the `sudo` group) |
-| SSH | `openssh-server` is installed; host keys are generated on first boot |
-| Hostname | `<board>-<first 6 hex of serial>`, expected `armsomsige5-xxxxxx` |
-| USB network | The OTG port presents a USB Ethernet device; the board is `10.0.0.1` |
-| Wired network | DHCP on the Ethernet port |
+| User / password | `user` / `user` (in the `sudo` group); confirmed, and the login banner prints it |
+| SSH | `openssh-server` running; confirmed |
+| Hostname | `armsomsige5-` + first 6 hex of the CPU serial (ours: `armsomsige5-382892`); resolves as `<hostname>.local` |
+| USB network | The image starts `usb-ncm-mtp-acm-gadget` (USB ID `37c1:f12e`, interface `flipusb0`, board `10.0.0.1`). Not tested: no cable was in `TYPEC` |
+| Wired network | DHCP; confirmed. Our cable was on interface `end1`; `end0` is the other port. Which physical port is which was not checked |
+| Wi-Fi | `wlan0`, BCM43752 (Ampak AP6398) on SDIO; needs the overlay in section 8 |
+
+The card holds several boot profiles (Desktop, TV Media Box, Router, Minimal, No Graphics), each with a `7.4.0-rc1` and a vendor `6.1.172` kernel entry under `/boot/loader/entries/`. Desktop on 7.4 boots by default.
 
 Ways in, easiest first:
 
@@ -136,6 +158,32 @@ minicom -D /dev/cu.usbserial-XXXX -b 1500000
 ```
 
 The ArmSoM docs do not state the logic level. Confirm it is 3.3 V against the schematic before connecting.
+
+## 8. Wi-Fi: add the v1.2 Wi-Fi/Bluetooth overlay
+
+With the default boot entry, Wi-Fi connects and then freezes, between 97 seconds and about 11 minutes after boot. The kernel logs `brcmfmac: brcmf_sdio_bus_sleep: error while changing bus sleep state -110`, then NetworkManager, `flipctl` and a `brcmf_wq` worker sit in uninterruptible sleep (`D` state). `nmcli` reports "NetworkManager is not running" though systemd says it is active, the load average climbs with no CPU use, and only a reboot clears it. Turning off Wi-Fi power saving (`802-11-wireless.powersave 2`) does not help.
+
+Cause: the plain `rk3576-armsom-sige5.dtb` has no `wifi@1` node under the SDIO controller (`mmc@2a320000`). The chip then runs without its 32 kHz LPO clock (from the `hym8563` RTC) and without its host-wake interrupt, and its bus sleep fails. The image ships an overlay for the v1.2 board, which has this Wi-Fi/Bluetooth module: `rk3576-armsom-sige5-v1.2-wifibt.dtbo`. It adds the `wifi@1` node and enables Bluetooth on `uart4`.
+
+Fix: add the overlay to the boot entry in use, then reboot.
+
+```bash
+E=/boot/loader/entries/900-flipperos-Desktop-7.4.0-rc1-g2be532b6a5aa.conf
+sudo cp "$E" /root/desktop-7.4-entry.conf.bak
+sudo sed -i '/^devicetreedir/a devicetree-overlay /@Desktop/usr/lib/linux-image-7.4.0-rc1-g2be532b6a5aa/rockchip/rk3576-armsom-sige5-v1.2-wifibt.dtbo' "$E"
+sudo reboot
+```
+
+Other profiles need the same line in their own entry, with their own subvolume (`/@Router/...` and so on). Check the overlay merges cleanly first with `fdtoverlay -i <base>.dtb -o /tmp/test.dtb <overlay>.dtbo`.
+
+After the fix, `ls /proc/device-tree/soc/mmc@2a320000/` lists `wifi@1`, and Bluetooth comes up as `BCM43752A2 ... Ampak AP6398`. On some boots one `bus sleep state -110` error still appears about 6 seconds in, but the chip recovers. Verified 2026-11-19: Wi-Fi stayed connected with no new errors for 17 minutes, past both earlier failure points.
+
+Joining a network so it reconnects at every boot:
+
+```bash
+sudo nmcli --ask dev wifi connect "<SSID>"
+sudo nmcli con modify "<SSID>" connection.autoconnect yes
+```
 
 ## Sources
 

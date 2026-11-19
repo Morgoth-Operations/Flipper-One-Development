@@ -13,14 +13,14 @@ The BPI-M5 Pro is the same hardware as the ArmSoM Sige5. Flipper Devices lists i
 | SoC | Rockchip RK3576 (4x Cortex-A72 + 4x Cortex-A53) |
 | GPU / NPU | Mali-G52 MC3 / 6 TOPS |
 | RAM | 4 GB LPDDR4 |
-| Storage | 64 GB eMMC, microSD slot |
+| Storage | 32 GB eMMC (29.1 GB usable on ours), microSD slot |
 | Flipper OS target | `sige5` |
 
 ## Status
 
 | Area | State |
 | --- | --- |
-| Board bring-up | Steps documented; not yet run on the board |
+| Board bring-up | Flipper OS boots from microSD (factory eMMC boot area erased); Wi-Fi stable with the v1.2 overlay. See [board bring-up](docs/board-bring-up.md) |
 | Prebuilt image | Nightly build 2494 downloaded and checksum-verified |
 | Local image build | Working: first `sige5` image built on 2026-11-17; not yet booted |
 
